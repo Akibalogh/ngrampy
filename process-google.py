@@ -10,7 +10,7 @@ import sys
 
 import argparse
 parser = argparse.ArgumentParser(description='MCMC for magic box!')
-parser.add_argument('--out', dest='out-path', type=str, default="/tmp/", nargs="?", help='The file name for output (year appended)')
+parser.add_argument('--out', dest='out-path', type=str, default="./tmp/", nargs="?", help='The file name for output (year appended)')
 parser.add_argument('--year-bin', dest='year-bin', type=int, default=25, nargs="?", help='How to bin the years')
 args = vars(parser.parse_args())
 
@@ -46,9 +46,13 @@ for l in sys.stdin:
 	if year != prev_year or ngram != prev_ngram:
 		
 		if prev_year is not None:
-			if prev_year not in year2file: year2file[prev_year] = open(args['out-path']+".%i"%prev_year, 'w', BUFSIZE)
-			year2file[prev_year].write(  "%s\t%i\n" % (prev_ngram,count)  ) # write the year
-		
+			if prev_year not in year2file:
+				year2file[prev_year] = open(args['out-path']+".%i"%prev_year, 'w', BUFSIZE)
+			# Apply filters
+			if prev_year >= 1950 and count > 100:
+				year2file[prev_year].write(  "%s\t%i\n" % (prev_ngram,count)  ) # write the year
+				print "%s\t%i\n" % (prev_ngram,count)
+
 		prev_ngram = ngram
 		prev_year  = year
 		count = c
@@ -57,7 +61,10 @@ for l in sys.stdin:
 		
 # And write the last line if we didn't alerady!
 if year == prev_year and ngram == prev_ngram:
-	year2file[prev_year].write("%s\t%i\n"%(ngram, c)) # write the year
+	# Apply filters
+	if prev_year >= 1950 and count > 100:
+		year2file[prev_year].write("%s\t%i\n"%(ngram, c)) # write the year
+		print "%s\t%i\n"%(ngram, c)
 
 # And close everything
 for year in year2file.keys():
