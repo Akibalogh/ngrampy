@@ -1,5 +1,5 @@
 eng-us-all/*
-Processed/*
+output/*
 nohup.out
 nohup.err
 tmp/*
