@@ -10,31 +10,42 @@ from datetime import datetime
 import sys
 import codecs
 sys.stdin = codecs.getreader(sys.stdin.encoding)(sys.stdin)
-import redis
+from peewee import *
+#import redis
 import argparse
 parser = argparse.ArgumentParser(description='MCMC for magic box!')
 parser.add_argument('--out', dest='out-path', type=str, default="./tmp/", nargs="?", help='The file name for output (year appended)')
 parser.add_argument('--year-bin', dest='year-bin', type=int, default=25, nargs="?", help='How to bin the years')
 args = vars(parser.parse_args())
 
-MINIMUM_POPULARITY_FILTER = 100
+MINIMUM_POPULARITY_FILTER = 5000
 MINIMUM_YEAR = 1950
-cleanup = re.compile(r"(\")") # kill quotes only
-#cleanup = re.compile(r"(_[A-Za-z\_\-]+)|(\")") # kill tags and quotes
-
 YEAR_BIN = int(args['year-bin'])
 BUFSIZE = int(10e6) # We can allow huge buffers if we want...
 
 prev_year, year, prev_ngram, ngram = None, None, None, None
 count = 0
+all_ngrams = dict()
 year2file = dict()
 part_count = None
+cleanup = re.compile(r"(\")") # kill quotes only
+column_splitter = re.compile(r"[\t\s]") # split on tabs OR spaces, since some of google seems to use one or the other. 
 
-r = redis.StrictRedis(host='localhost', port=6379, db=0)
+#r = redis.StrictRedis(host='localhost', port=6379, db=0)
 #r.set_response_callback('GET', int)
 start = datetime.now()
+mysql_db = MySQLDatabase('ngrams')
+mysql_db.connect()
 
-column_splitter = re.compile(r"[\t\s]") # split on tabs OR spaces, since some of google seems to use one or the other. 
+class MySQLModel(Model):
+    class Meta:
+        database = mysql_db
+
+# SET WHETHER NGRAMS SHOULD HAVE TAGS OR NOT
+#cleanup = re.compile(r"(_[A-Za-z\_\-]+)|(\")") # kill tags and quotes
+class NGram_tags(MySQLModel):
+    key = CharField(max_length=50, null=False)
+    value = IntegerField()
 
 for l in sys.stdin:
 	l = l.lower().strip()
@@ -42,7 +53,6 @@ for l in sys.stdin:
 	#l = re.sub(r"\"", "", l) # remove quotes
 	#l = re.sub(r"_[A-Z\_\-]+", "", l) # remove tags
 
-	
 	parts = column_splitter.split(l)
 	if part_count is None: part_count = len(parts)
 	if len(parts) != part_count: continue # skip this line if its garbage NOTE: this may mess up with some unicode chars?
@@ -62,13 +72,22 @@ for l in sys.stdin:
 		# Apply filters
 		if count >= MINIMUM_POPULARITY_FILTER:
 			#year2file[prev_year].write(  "%s\t%i\n" % (prev_ngram,count)  ) # write the year
-			#print "%s\t%i\n" % (prev_ngram,count)
-			if (r.get(prev_ngram) is None):
-				r.set(prev_ngram, count)
-				#print "set ngram: ", prev_ngram, " to ", count
+			if (all_ngrams.has_key(prev_ngram)):
+				sys.stderr.write('found existing ngram ' + prev_ngram + '\n')
 			else:
-				print "found existing ngram ", prev_ngram, " at ", r.get(prev_ngram), " when trying to set ", ngram, " to ", count
+				print '"%s"\t%i' % (prev_ngram, count)
+				all_ngrams[prev_ngram] = count
+			#try:
+				# Get a single record
+				#ngram_get = NGram_tags.get(NGram_tags.key == prev_ngram)
+				#print "found existing ngram ", prev_ngram, " at ", ngram_get.key, " when trying to set ", ngram, " to ", count
 				#raise Exception('ValueError', 'ngram %s already exists in redis' % (prev_ngram)
+			#except NGram_tags.DoesNotExist:
+				#print "set ngram: ", prev_ngram, " to ", count
+				#ngram_insert = NGram_tags.insert(key = prev_ngram, value = count)
+				#ngram_insert.execute()
+				#r.set(prev_ngram, count)
+
 		count = i
 	
 	#if ("quasvis" in ngram):
@@ -82,17 +101,24 @@ for l in sys.stdin:
 	
 # And write the last line if we didn't alerady!
 if year == prev_year and ngram == prev_ngram:
-	print "insert last line ", ngram, " ", count
+	sys.stderr.write('insert last line ' + ngram + '\n')
 	
 	# Apply filters
 	if prev_year >= MINIMUM_YEAR and count >= MINIMUM_POPULARITY_FILTER:
+
+		if (all_ngrams.has_key(prev_ngram)):
+                	sys.stderr.write('found existing ngram ' + ngram + '\n')
+                else:
+                	print '"%s"\t%i' % (ngram, count)
+               		all_ngrams[ngram] = count
 		#year2file[prev_year].write("%s\t%i\n"%(ngram, c)) # write the year
-		#print "%s\t%i\n"%(ngram, c)
-		r.set(ngram, count)
+		#ngram_insert = NGram_tags.insert(key = ngram, value = count)
+                #ngram_insert.execute()
+		#r.set(ngram, count)
 
 # And close everything
 for year in year2file.keys():
 	year2file[year].close()
 
 end = datetime.now()
-print "total runtime: ", end - start
+sys.stderr.write('total runtime: ' + str(end - start))
