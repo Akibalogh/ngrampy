@@ -26,7 +26,6 @@ BUFSIZE = int(10e6) # We can allow huge buffers if we want...
 prev_year, year, prev_ngram, ngram = None, None, None, None
 count = 0
 all_ngrams = dict()
-year2file = dict()
 part_count = None
 cleanup = re.compile(r"(\")") # kill quotes only
 column_splitter = re.compile(r"[\t\s]") # split on tabs OR spaces, since some of google seems to use one or the other. 
@@ -47,7 +46,8 @@ start = datetime.now()
 #    value = IntegerField()
 
 #cleanup = re.compile(r"(_[A-Za-z\_\.\-]+)|(\")") # kill tags and quotes
-cleanup = re.compile(r"(\.[A-Za-z\_\-]+)|(\")") # kill dot notation and quotes
+#cleanup = re.compile(r"(\.[A-Za-z\_\-]+)|(\")") # kill dot notation and quotes
+cleanup = re.compile(r"(\")") # kill quotes only
 
 for l in sys.stdin:
 	l = l.lower().strip()
@@ -69,18 +69,13 @@ for l in sys.stdin:
 		#print "about to set. ngram ", prev_ngram, " got to: ", count
 		# Apply filters
 		if count >= MINIMUM_POPULARITY_FILTER:
-			#year2file[prev_year].write(  "%s\t%i\n" % (prev_ngram,count)  ) # write the year
 			if (all_ngrams.has_key(prev_ngram)):
 				all_ngrams[prev_ngram] = all_ngrams[prev_ngram] + count
 				sys.stderr.write('found existing ngram ' + prev_ngram + ' and added ' + str(count) + ' to make ' + str(all_ngrams[prev_ngram]) + '\n')
-				#if (all_ngrams[prev_ngram] < count):
-                                #	all_ngrams[prev_ngram] = count
-				#	sys.stderr.write('found existing ngram ' + prev_ngram + ' and replaced with ' + count + '\n')
-				#else:
-				#	sys.stderr.write('found existing ngram ' + prev_ngram + ' but ignored because it was ' + count + '\n')
 			else:
-				print '"%s"\t%i' % (prev_ngram, count)
+				# Store the count in the dictionary
 				all_ngrams[prev_ngram] = count
+
 			#try:
 				# Get a single record
 				#ngram_get = NGram_tags.get(NGram_tags.key == prev_ngram)
@@ -94,14 +89,8 @@ for l in sys.stdin:
 
 		count = 0
 	
-	#if ("quasvis" in ngram):
-	#	print ngram, " | ", count, " | ", l	
-	
 	if year >= MINIMUM_YEAR:
 		count += i
-
-	# year2file[prev_year] = open(args['out-path']+".%i"%prev_year, 'w', BUFSIZE)
-	
 	
 # And write the last line if we didn't alerady!
 if year == prev_year and ngram == prev_ngram:
@@ -109,20 +98,18 @@ if year == prev_year and ngram == prev_ngram:
 	
 	# Apply filters
 	if prev_year >= MINIMUM_YEAR and count >= MINIMUM_POPULARITY_FILTER:
-
 		if (all_ngrams.has_key(prev_ngram)):
                 	sys.stderr.write('found existing ngram ' + ngram + '\n')
                 else:
-                	print '"%s"\t%i' % (ngram, count)
                		all_ngrams[ngram] = count
-		#year2file[prev_year].write("%s\t%i\n"%(ngram, c)) # write the year
 		#ngram_insert = NGram_tags.insert(key = ngram, value = count)
                 #ngram_insert.execute()
 		#r.set(ngram, count)
 
-# And close everything
-#for year in year2file.keys():
-#	year2file[year].close()
+# Print all output
+
+for ngram in all_ngrams:
+	print '"%s"\t%i' % (ngram, all_ngrams[ngram])
 
 end = datetime.now()
-sys.stderr.write('total runtime: ' + str(end - start))
+sys.stderr.write('total runtime: ' + str(end - start) + '\n')
