@@ -34,29 +34,29 @@ column_splitter = re.compile(r"[\t\s]") # split on tabs OR spaces, since some of
 #r = redis.StrictRedis(host='localhost', port=6379, db=0)
 #r.set_response_callback('GET', int)
 start = datetime.now()
-mysql_db = MySQLDatabase('ngrams')
-mysql_db.connect()
+#mysql_db = MySQLDatabase('ngrams')
+#mysql_db.connect()
 
-class MySQLModel(Model):
-    class Meta:
-        database = mysql_db
+#class MySQLModel(Model):
+#    class Meta:
+#        database = mysql_db
 
 # SET WHETHER NGRAMS SHOULD HAVE TAGS OR NOT
-#cleanup = re.compile(r"(_[A-Za-z\_\-]+)|(\")") # kill tags and quotes
-class NGram_tags(MySQLModel):
-    key = CharField(max_length=50, null=False)
-    value = IntegerField()
+#class NGram_tags(MySQLModel):
+#    key = CharField(max_length=50, null=False)
+#    value = IntegerField()
+
+#cleanup = re.compile(r"(_[A-Za-z\_\.\-]+)|(\")") # kill tags and quotes
+cleanup = re.compile(r"(\.[A-Za-z\_\-]+)|(\")") # kill dot notation and quotes
 
 for l in sys.stdin:
 	l = l.lower().strip()
 	l = cleanup.sub("", l)  
-	#l = re.sub(r"\"", "", l) # remove quotes
-	#l = re.sub(r"_[A-Z\_\-]+", "", l) # remove tags
+	l = re.sub(r"\"", "", l) # remove quotes
 
 	parts = column_splitter.split(l)
 	if part_count is None: part_count = len(parts)
 	if len(parts) != part_count: continue # skip this line if its garbage NOTE: this may mess up with some unicode chars?
-	
 	i = int(parts[-2])
 	prev_year = year
 	year = int(int(parts[-3]) / YEAR_BIN) * YEAR_BIN # round the year
@@ -64,8 +64,6 @@ for l in sys.stdin:
 	ngram = "\t".join(parts[0:-3]) # join everything else
 	ngram = ngram.lstrip().rstrip()
 
-	#print "new ngram: ", ngram, " year ", year, " | prev: ", prev_ngram, " count ", count
-	
 	# ngram has changed so print the cumulative total
 	if (ngram != prev_ngram and prev_ngram is not None):
 		#print "about to set. ngram ", prev_ngram, " got to: ", count
@@ -73,7 +71,13 @@ for l in sys.stdin:
 		if count >= MINIMUM_POPULARITY_FILTER:
 			#year2file[prev_year].write(  "%s\t%i\n" % (prev_ngram,count)  ) # write the year
 			if (all_ngrams.has_key(prev_ngram)):
-				sys.stderr.write('found existing ngram ' + prev_ngram + '\n')
+				all_ngrams[prev_ngram] = all_ngrams[prev_ngram] + count
+				sys.stderr.write('found existing ngram ' + prev_ngram + ' and added ' + str(count) + ' to make ' + str(all_ngrams[prev_ngram]) + '\n')
+				#if (all_ngrams[prev_ngram] < count):
+                                #	all_ngrams[prev_ngram] = count
+				#	sys.stderr.write('found existing ngram ' + prev_ngram + ' and replaced with ' + count + '\n')
+				#else:
+				#	sys.stderr.write('found existing ngram ' + prev_ngram + ' but ignored because it was ' + count + '\n')
 			else:
 				print '"%s"\t%i' % (prev_ngram, count)
 				all_ngrams[prev_ngram] = count
@@ -88,7 +92,7 @@ for l in sys.stdin:
 				#ngram_insert.execute()
 				#r.set(prev_ngram, count)
 
-		count = i
+		count = 0
 	
 	#if ("quasvis" in ngram):
 	#	print ngram, " | ", count, " | ", l	
@@ -117,8 +121,8 @@ if year == prev_year and ngram == prev_ngram:
 		#r.set(ngram, count)
 
 # And close everything
-for year in year2file.keys():
-	year2file[year].close()
+#for year in year2file.keys():
+#	year2file[year].close()
 
 end = datetime.now()
 sys.stderr.write('total runtime: ' + str(end - start))

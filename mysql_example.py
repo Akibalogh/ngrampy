@@ -22,5 +22,10 @@ framing = '''ALTER TABLE %table CONVERT TO CHARACTER SET utf8 COLLATE utf8_unico
 alter_query = framing % {'table': 'ngram_tags' }
 execute(alter_query)
 
-# LOAD DATA INFILE 'data.txt' INTO TABLE table2
-#  FIELDS TERMINATED BY '\t'
+# Commands in MySQL
+
+# ALTER TABLE ngram_notags CONVERT TO CHARACTER SET utf8 COLLATE utf8_unicode_ci;
+
+# mysqlimport --local --fields-terminated-by "\t" --fields-optionally-enclosed-by '"' ngrams ngram_notags
+
+# UNNECESSARY? CREATE INDEX ngram_idx on ngram_notags(ngram);
