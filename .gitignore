@@ -3,3 +3,10 @@ output/*
 nohup.out
 nohup.err
 tmp/*
+*~
+TAGS
+tags
+*.pyc
+x
+y
+z
