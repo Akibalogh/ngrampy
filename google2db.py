@@ -33,6 +33,9 @@ def display_status():
         assert(int(n) in [1, 2, 3, 4, 5])
     fo.close()
     print "%d unprocessed ngram files left" % num
+    if num:
+        n, prefix = lst[-1].split(' ')
+        print "Next in line: %sgram-%s" % (n, prefix)
 
 def mklock():
     fo = open("workarea/index_lock", "w")
