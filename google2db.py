@@ -3,9 +3,9 @@ import os
 import urllib
 import fcntl # for file locking
 import cleanup # "./cleanup.py"
-import tempfile
 import subprocess
 import signal # for clean exit upon Ctrl-C
+import gzip
 
 index_file_name = "workarea/unprocessed.txt"
 
@@ -75,32 +75,76 @@ def next_unprocessed_ngram_file(lock, unlock):
 def get_ngram_file_path(n, prefix):
     ''' Returns a file object to a ngram file. The ngram file is downloaded
     if needed. '''
+    def download_dir(n, prefix):
+        topdir = "/media/data0/ngrampy/eng-us-all"
+        if not os.path.exists(topdir):
+            return None
+        if n == 1:
+            return os.path.join(topdir, "1")
+        elif n == 2:
+            lookup = {"abcde": "2a-e",
+                      "fghijklm": "2f-m",
+                      "nopqr": "2n-r",
+                      "stuvwxyz": "2s-z"}
+            p0 = prefix[0]
+            dn = None
+            if p0 >= 'a' and p0 <='e':
+                dn = "2a-e"
+            elif p0 >= 'f' and p0 <= 'm':
+                dn = "2f-m"
+            elif p0 >= 'n' and p0 <= 'r':
+                dn = "2n-r"
+            elif p0 >= 's' and p0 <= 'z':
+                dn = "2s-z"
+            return os.path.join(topdir, dn)
+        else:
+            return None
     fname = "googlebooks-eng-all-%dgram-20120701-%s" % (n, prefix)
-    return fname
+    fname_gz = fname + ".gz"
+    dndir = download_dir(n, prefix)
+    srcpath = None
+    if dndir:
+        srcpath = os.path.join(dndir, fname)
+        print "Found download gz file: %s" % srcpath
+    else:
+        srcpath = os.path.join("workarea", fname_gz)
+        urllib.urlretrieve(
+            "http://storage.googleapis.com/books/ngrams/books/" + fname_gz,
+            srcpath)
+        print "Downloaded %s" % srcpath
+    dstpath = os.path.join("workarea", fname)
+    dstfo = open(dstpath, 'w')
+    srcfo = gzip.open(srcpath, 'rb')
+    dstfo.write(srcfo.read())
+    srcfo.close()
+    dstfo.close()
+    # Try to remove .gz file to save space
+    try:
+        os.unlink(srcpath)
+    except OSError:
+        pass # ignore error
+    return dstpath
 
 def epl(n, prefix):
     ''' Main processing and loading routine. '''
-    fname = "googlebooks-eng-all-%dgram-20120701-%s" % (n, prefix)
-    fname_gz = fname + ".gz"
-    fpath = os.path.join("workarea", fname_gz)
-    if not os.path.exists(fpath):
-        # Need to download file first
-        urllib.retrieve(
-            "http://storage.googleapis.com/books/ngrams/books/" + fname_gz,
-            fpath)
-        subprocess.check_call(['gunzip', fpath])
+    fpath = get_ngram_file_path(n, prefix)
     fin = open(fpath)
     ngrams = cleanup.process_ngram_data(fin)
     fin.close()
     # Delete raw input file to save space now that it is extracted.
-    os.unlink(fname)
-    fout = tempfile.NamedTemporaryFile()
-    cleanup.output(ngrams, fout)
+    os.unlink(fpath)
+    # Import file name must be the same as database table name. So put it under
+    # a uniquely named tmp directory to avoid conflict.
+    tmpdir = os.path.join("workarea", "%dgram-%s" % (n, prefix))
+    os.mkdir(tmpdir)
+    outfpath = os.path.abspath(os.path.join(tmpdir, "ngram_%d" % n))
+    cleanup.output(ngrams, outfpath)
     # load into MySQL
-    subprocess.check_call(['mysqlimport', '--local',
-                           '--fields-terminated-by', "\t",
-                           'GoogleNgrams', 'NgramsStats'])
-    fout.close()
+    cmdargs = ['mysqlimport', '--local', '--fields-terminated-by', '"\\t"', outfpath]
+    print ' '.join(cmdargs)
+    #subprocess.check_call(cmdargs)
+    #os.unlink(outfpath)
+    os.rmdir(tmpdir)
 
 def test_epl(n, prefix):
     ''' Test EPL. '''
@@ -152,7 +196,7 @@ if __name__ == "__main__":
     cmd = sys.argv[1]
     if cmd == 'init':
         # Doing 1, 2, 3 -grams for now. (4, 5 grams later)
-        init_index([1, 2, 3])
+        init_index([1])
     elif cmd == 'status':
         display_status()
     elif cmd == 'run':

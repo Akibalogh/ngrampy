@@ -185,11 +185,11 @@ def process_ngram_data(fin):
         process_line(line, filters, ngrams)
         n += 1
         if n % 1000000 == 0:
-            print "%d million lines so far" % (n / 1000000)
+            print "%s: %d million lines so far" % (fin.name, (n / 1000000))
     return ngrams
 
 def output(ngrams, outfile):
-    ''' Currently just print to stdout. '''
+    ''' Print to outfile. '''
     fo = open(outfile, 'w')
     for g, c in ngrams.items():
         if c >= conf_min_count_total:
