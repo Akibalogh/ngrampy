@@ -5,7 +5,7 @@ import fcntl # for file locking
 import cleanup # "./cleanup.py"
 import subprocess
 import signal # for clean exit upon Ctrl-C
-import gzip
+import shutil
 
 index_file_name = "workarea/unprocessed.txt"
 
@@ -40,13 +40,13 @@ def display_status():
 def mklock():
     fo = open("workarea/index_lock", "w")
     def lock():
-        print "locking..."
+        #print "locking..."
         fcntl.lockf(fo, fcntl.LOCK_EX)
     def unlock():
-        print "unlocking..."
+        #print "unlocking..."
         fcntl.lockf(fo, fcntl.LOCK_UN)
     def destroy():
-        print "destroying..."
+        #print "destroying..."
         fo.close()
     return (lock, unlock, destroy)
 
@@ -75,12 +75,15 @@ def next_unprocessed_ngram_file(lock, unlock):
 def get_ngram_file_path(n, prefix):
     ''' Returns a file object to a ngram file. The ngram file is downloaded
     if needed. '''
-    def download_dir(n, prefix):
+    def downloaded_path(n, prefix):
         topdir = "/media/data0/ngrampy/eng-us-all"
+        # Note this fname has an extra "-us-"
+        fname = "googlebooks-eng-us-all-%dgram-20120701-%s.gz" % (n, prefix)
         if not os.path.exists(topdir):
             return None
+        fpath = None
         if n == 1:
-            return os.path.join(topdir, "1")
+            fpath = os.path.join(topdir, "1", fname)
         elif n == 2:
             lookup = {"abcde": "2a-e",
                       "fghijklm": "2f-m",
@@ -96,28 +99,31 @@ def get_ngram_file_path(n, prefix):
                 dn = "2n-r"
             elif p0 >= 's' and p0 <= 'z':
                 dn = "2s-z"
-            return os.path.join(topdir, dn)
+            if dn:
+                fpath = os.path.join(topdir, dn, fname)
+            else:
+                return None
+        else:
+            return None
+        if os.path.exists(fpath):
+            return fpath
         else:
             return None
     fname = "googlebooks-eng-all-%dgram-20120701-%s" % (n, prefix)
     fname_gz = fname + ".gz"
-    dndir = download_dir(n, prefix)
-    srcpath = None
-    if dndir:
-        srcpath = os.path.join(dndir, fname)
-        print "Found download gz file: %s" % srcpath
+    dnpath = downloaded_path(n, prefix)
+    srcpath = os.path.join("workarea", fname_gz)
+    if dnpath:
+        print "Found downloaded gz file: %s" % srcpath
+        # Copy over to workarea
+        shutil.copyfile(dnpath, srcpath)
     else:
-        srcpath = os.path.join("workarea", fname_gz)
         urllib.urlretrieve(
             "http://storage.googleapis.com/books/ngrams/books/" + fname_gz,
             srcpath)
         print "Downloaded %s" % srcpath
+    subprocess.check_call(['gunzip', srcpath])
     dstpath = os.path.join("workarea", fname)
-    dstfo = open(dstpath, 'w')
-    srcfo = gzip.open(srcpath, 'rb')
-    dstfo.write(srcfo.read())
-    srcfo.close()
-    dstfo.close()
     # Try to remove .gz file to save space
     try:
         os.unlink(srcpath)
@@ -140,10 +146,17 @@ def epl(n, prefix):
     outfpath = os.path.abspath(os.path.join(tmpdir, "ngram_%d" % n))
     cleanup.output(ngrams, outfpath)
     # load into MySQL
-    cmdargs = ['mysqlimport', '--local', '--fields-terminated-by', '"\\t"', outfpath]
-    print ' '.join(cmdargs)
-    #subprocess.check_call(cmdargs)
-    #os.unlink(outfpath)
+    cols = ','.join(["gram%d" % i for i in range(n)])
+    cmdargs = ['mysqlimport', '-u', 'root',
+               '--local', '--fields-terminated-by="\\t"',
+               '--columns=%s,frequencies' % cols,
+               'google_ngram', outfpath]
+    cmdargs_str =  ' '.join(cmdargs)
+    print cmdargs_str
+    # For some reason, I have to do one big command string and set shell=True
+    # for this to work.
+    subprocess.check_call(cmdargs_str, shell=True)
+    os.unlink(outfpath)
     os.rmdir(tmpdir)
 
 def test_epl(n, prefix):
@@ -167,7 +180,7 @@ def test_epl(n, prefix):
 stop_processing = False
 def clean_exit(signum, frame):
     ''' Signal handler for clean exit. '''
-    print "Got signal %d, Cleaning up and stopping..." % signum
+    print "Got signal %d, finishing up current file and stopping..." % signum
     global stop_processing
     stop_processing = True
 
@@ -196,7 +209,7 @@ if __name__ == "__main__":
     cmd = sys.argv[1]
     if cmd == 'init':
         # Doing 1, 2, 3 -grams for now. (4, 5 grams later)
-        init_index([1])
+        init_index([1, 2, 3])
     elif cmd == 'status':
         display_status()
     elif cmd == 'run':

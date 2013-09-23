@@ -193,8 +193,10 @@ def output(ngrams, outfile):
     fo = open(outfile, 'w')
     for g, c in ngrams.items():
         if c >= conf_min_count_total:
-            #print "%s\t%d" % (g, c) 
-            fo.write("%s\t%d\n" % (g, c))
+            print "'%s'\t%d" % (g, c) 
+            # separate grams with '\t'
+            grams = '\t'.join(g.split(' '))
+            fo.write("%s\t%d\n" % (grams, c))
     fo.close()
 
 if __name__ == "__main__":
