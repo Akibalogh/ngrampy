@@ -186,6 +186,7 @@ def process_ngram_data(fin):
         n += 1
         if n % 1000000 == 0:
             print "%s: %d million lines so far" % (fin.name, (n / 1000000))
+    print "%s: %d million lines total" % (fin.name, (n / 1000000.0))
     return ngrams
 
 def output(ngrams, outfile):
@@ -193,7 +194,7 @@ def output(ngrams, outfile):
     fo = open(outfile, 'w')
     for g, c in ngrams.items():
         if c >= conf_min_count_total:
-            print "'%s'\t%d" % (g, c) 
+            #print "'%s'\t%d" % (g, c) 
             # separate grams with '\t'
             grams = '\t'.join(g.split(' '))
             fo.write("%s\t%d\n" % (grams, c))

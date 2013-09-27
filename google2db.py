@@ -5,9 +5,9 @@ import fcntl # for file locking
 import cleanup # "./cleanup.py"
 import subprocess
 import signal # for clean exit upon Ctrl-C
-import shutil
 
-index_file_name = "workarea/unprocessed.txt"
+workarea = "/media/data0/ning/workarea"
+index_file_name = os.path.join(workarea, "unprocessed.txt")
 
 def init_index(ngram_numbers):
     ''' Do this once in the beginning. Adds all ngram file names to the
@@ -17,7 +17,7 @@ def init_index(ngram_numbers):
     fo.write("[")
     # Do it in reverse order since we will be popping them out from back
     for n in sorted(ngram_numbers, reverse=True):
-        fname = "workarea/%dgrams.txt" % n
+        fname = os.path.join(workarea, "%dgrams.txt" % n)
         ngram_file_prefixes = open(fname).read().strip().split(' ')
         for prefix in sorted(ngram_file_prefixes, reverse=True):
             fo.write('"%d %s", ' % (n, prefix))
@@ -38,7 +38,8 @@ def display_status():
         print "Next in line: %sgram-%s" % (n, prefix)
 
 def mklock():
-    fo = open("workarea/index_lock", "w")
+    fpath = os.path.join(workarea, "index_lock")
+    fo = open(fpath, "w")
     def lock():
         #print "locking..."
         fcntl.lockf(fo, fcntl.LOCK_EX)
@@ -75,60 +76,19 @@ def next_unprocessed_ngram_file(lock, unlock):
 def get_ngram_file_path(n, prefix):
     ''' Returns a file object to a ngram file. The ngram file is downloaded
     if needed. '''
-    def downloaded_path(n, prefix):
-        topdir = "/media/data0/ngrampy/eng-us-all"
-        # Note this fname has an extra "-us-"
-        fname = "googlebooks-eng-us-all-%dgram-20120701-%s.gz" % (n, prefix)
-        if not os.path.exists(topdir):
-            return None
-        fpath = None
-        if n == 1:
-            fpath = os.path.join(topdir, "1", fname)
-        elif n == 2:
-            lookup = {"abcde": "2a-e",
-                      "fghijklm": "2f-m",
-                      "nopqr": "2n-r",
-                      "stuvwxyz": "2s-z"}
-            p0 = prefix[0]
-            dn = None
-            if p0 >= 'a' and p0 <='e':
-                dn = "2a-e"
-            elif p0 >= 'f' and p0 <= 'm':
-                dn = "2f-m"
-            elif p0 >= 'n' and p0 <= 'r':
-                dn = "2n-r"
-            elif p0 >= 's' and p0 <= 'z':
-                dn = "2s-z"
-            if dn:
-                fpath = os.path.join(topdir, dn, fname)
-            else:
-                return None
-        else:
-            return None
-        if os.path.exists(fpath):
-            return fpath
-        else:
-            return None
     fname = "googlebooks-eng-all-%dgram-20120701-%s" % (n, prefix)
+    dstpath = os.path.join(workarea, fname)
+    if os.path.exists(dstpath):
+        return dstpath
+    # Need to get .gz file and gunzip it.
     fname_gz = fname + ".gz"
-    dnpath = downloaded_path(n, prefix)
-    srcpath = os.path.join("workarea", fname_gz)
-    if dnpath:
-        print "Found downloaded gz file: %s" % srcpath
-        # Copy over to workarea
-        shutil.copyfile(dnpath, srcpath)
-    else:
+    srcpath = os.path.join(workarea, fname_gz)
+    if not os.path.exists(srcpath):
         urllib.urlretrieve(
             "http://storage.googleapis.com/books/ngrams/books/" + fname_gz,
             srcpath)
         print "Downloaded %s" % srcpath
     subprocess.check_call(['gunzip', srcpath])
-    dstpath = os.path.join("workarea", fname)
-    # Try to remove .gz file to save space
-    try:
-        os.unlink(srcpath)
-    except OSError:
-        pass # ignore error
     return dstpath
 
 def epl(n, prefix):
@@ -141,7 +101,7 @@ def epl(n, prefix):
     os.unlink(fpath)
     # Import file name must be the same as database table name. So put it under
     # a uniquely named tmp directory to avoid conflict.
-    tmpdir = os.path.join("workarea", "%dgram-%s" % (n, prefix))
+    tmpdir = os.path.join(workarea, "%dgram-%s" % (n, prefix))
     os.mkdir(tmpdir)
     outfpath = os.path.abspath(os.path.join(tmpdir, "ngram_%d" % n))
     cleanup.output(ngrams, outfpath)
@@ -163,17 +123,17 @@ def test_epl(n, prefix):
     ''' Test EPL. '''
     fname = "googlebooks-eng-all-%dgram-20120701-%s" % (n, prefix)
     fname_gz = fname + ".gz"
-    fpath = os.path.join("workarea", fname_gz)
+    fpath = os.path.join(workarea, fname_gz)
     furl = "http://storage.googleapis.com/books/ngrams/books/" + fname_gz
     print "Download: %s to %s" % (furl, fpath)
-#    subprocess.check_call(['curl', '-D', "workarea/%d%s.hd" % (n, prefix),
-#                           '-o', '/dev/null', furl])
-#    fo = open("workarea/%d%s.hd" % (n, prefix))
-#    for line in fo:
-#        line = line.strip()
-#        if (line.startswith("Content-Length: ")):
-#            length = line[len("Content-Length: "):]
-#            print "\t%s bytes" % length
+    header_path = os.path.join(workarea, "%d%s.hd" % (n, prefix))
+    subprocess.check_call(['curl', '-D', header_path, '-o', '/dev/null', furl])
+    fo = open(header_path % (n, prefix))
+    for line in fo:
+        line = line.strip()
+        if (line.startswith("Content-Length: ")):
+            length = line[len("Content-Length: "):]
+            print "\t%s bytes" % length
     return
 
 # Signal ''process()'' to clean exit.
@@ -209,7 +169,7 @@ if __name__ == "__main__":
     cmd = sys.argv[1]
     if cmd == 'init':
         # Doing 1, 2, 3 -grams for now. (4, 5 grams later)
-        init_index([1, 2, 3])
+        init_index([3])
     elif cmd == 'status':
         display_status()
     elif cmd == 'run':
