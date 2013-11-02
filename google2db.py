@@ -5,6 +5,23 @@ import fcntl # for file locking
 import cleanup # "./cleanup.py"
 import subprocess
 import signal # for clean exit upon Ctrl-C
+import time
+
+def retry(try_fn, giveup_fn, exception_list, n, wait=0):
+    ''' Try function ''try_fn'', catching exceptions in ''exceptions_list'',
+    if any occurred, and retry for up to ''n'' times, then give up and call
+    ''giveup_fn''. Sleeps ''wait'' seconds between retries.'''
+    if not n:
+        # used up retries, give up
+        giveup_fn()
+        return None
+    try:
+        return try_fn()
+    except exception_list as e:
+        print "Got %s, retrying in %f seconds" % (e, wait)
+        time.sleep(wait)
+        retry(try_fn, giveup_fn, exception_list, n - 1, wait)
+
 
 workarea = "/media/data0/ning/workarea"
 index_file_name = os.path.join(workarea, "unprocessed.txt")
@@ -91,6 +108,18 @@ def get_ngram_file_path(n, prefix):
     subprocess.check_call(['gunzip', srcpath])
     return dstpath
 
+def load_into_db(fpath, gram_n):
+    cols = ','.join(["gram%d" % i for i in range(gram_n)] + ['frequencies'])
+    cmdargs = ['mysqlimport', '-u', 'root',
+               '--local', '--fields-terminated-by="\\t"',
+               '--columns=%s' % cols,
+               'google_ngram', fpath]
+    cmdargs_str =  ' '.join(cmdargs)
+    print cmdargs_str
+    # For some reason, I have to do one big command string and set shell=True
+    # for this to work.
+    subprocess.check_call(cmdargs_str, shell=True)
+
 def epl(n, prefix):
     ''' Main processing and loading routine. '''
     fpath = get_ngram_file_path(n, prefix)
@@ -106,16 +135,7 @@ def epl(n, prefix):
     outfpath = os.path.abspath(os.path.join(tmpdir, "ngram_%d" % n))
     cleanup.output(ngrams, outfpath)
     # load into MySQL
-    cols = ','.join(["gram%d" % i for i in range(n)])
-    cmdargs = ['mysqlimport', '-u', 'root',
-               '--local', '--fields-terminated-by="\\t"',
-               '--columns=%s,frequencies' % cols,
-               'google_ngram', outfpath]
-    cmdargs_str =  ' '.join(cmdargs)
-    print cmdargs_str
-    # For some reason, I have to do one big command string and set shell=True
-    # for this to work.
-    subprocess.check_call(cmdargs_str, shell=True)
+    load_into_db(outfpath, n)
     os.unlink(outfpath)
     os.rmdir(tmpdir)
 
@@ -155,7 +175,17 @@ def process(workfunc):
         n, prefix = next_unprocessed_ngram_file(lock, unlock)
         if n is not None:
             cnt += 1
-            workfunc(n, prefix)
+            try_fn = lambda: workfunc(n, prefix)
+            def giveup_fn():
+                print "Failed to get ngram file %d-%s!" % (n, prefix)
+                fo = open("failed-ngrams.txt", "a")
+                fo.write("%d-%s" % (n, prefix))
+                fo.close()
+                gzfile = "googlebooks-eng-all-%dgram-20120701-%s.gz" % (n, prefix)
+                os.unlink(os.path.join(workarea, gzfile))
+            retry(try_fn, giveup_fn,
+                  (IOError, subprocess.CalledProcessError, OSError),
+                  3, 1)
         else:
             print "Hooray, All done!!!!!!"
             break
@@ -164,6 +194,19 @@ def process(workfunc):
     print "Processed %d ngrams files" % cnt
     return
 
+def is_gram_in_db(g):
+    cmdstr_fmt = """mysql -u root -B -e 'select count(*) from ngram_3 where gram0 like "%s%%";' google_ngram"""
+    cmdstr = cmdstr_fmt % g
+    output = subprocess.check_output(cmdstr, shell=True)
+    return (int(output.split('\n')[1]) > 0)
+
+def checkdb():
+    ''' Check for omitted 3grams. '''
+    fname = os.path.join(workarea, "%dgrams.txt" % 3)
+    ngram_file_prefixes = open(fname).read().strip().split(' ')
+    for prefix in sorted(ngram_file_prefixes):
+        if not is_gram_in_db(prefix):
+            print prefix
 
 if __name__ == "__main__":
     cmd = sys.argv[1]
@@ -174,6 +217,8 @@ if __name__ == "__main__":
         display_status()
     elif cmd == 'run':
         process(epl)
+    elif cmd == 'checkdb':
+        checkdb()
     elif cmd == 'test':
         process(test_epl)
     else:
