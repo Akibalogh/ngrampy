@@ -14,21 +14,34 @@ def retry(try_fn, giveup_fn, exception_list, n, wait=0):
     if not n:
         # used up retries, give up
         giveup_fn()
-        return None
+        return False
     try:
-        return try_fn()
+        try_fn()
+        return True
     except exception_list as e:
         print "Got %s, retrying in %f seconds" % (e, wait)
         time.sleep(wait)
         retry(try_fn, giveup_fn, exception_list, n - 1, wait)
 
 
-workarea = "/media/data0/ning/workarea"
+topdir = "."
+workarea = os.path.join(topdir, "workarea")
+resultsarea = os.path.join(topdir, "results")
 index_file_name = os.path.join(workarea, "unprocessed.txt")
+success_file = os.path.join(workarea, "succeeded-ngrams.txt")
+failure_file = os.path.join(workarea, "failed-ngrams.txt")
 
 def init_index(ngram_numbers):
     ''' Do this once in the beginning. Adds all ngram file names to the
     index file. '''
+    # create directories
+    if not os.path.exists(workarea):
+        os.mkdir(workarea)
+    # clear status files
+    clear_file = lambda f: open(f, "w").close()
+    map(clear_file, [success_file, failure_file])
+    if not os.path.exists(resultsarea):
+        os.mkdir(resultsarea)
     fo = open(index_file_name, "w")
     # Output in Python list format
     fo.write("[")
@@ -42,6 +55,14 @@ def init_index(ngram_numbers):
     fo.close()
 
 def display_status():
+    ''' Displays current ngram-processing status. '''
+    # Succeeded
+    if os.path.exists(success_file):
+        num = len(set(line for line in open(success_file)))
+        print "Successes: %d" % num
+    if os.path.exists(failure_file):
+        num = len(set(line for line in open(failure_file)))
+        print "Failures: %d" % num
     fo = open(index_file_name)
     lst = eval(fo.read())
     num = len(lst) # Number of unprocessed ngram files
@@ -90,13 +111,13 @@ def next_unprocessed_ngram_file(lock, unlock):
     unlock()
     return (n, prefix)
 
-def get_ngram_file_path(n, prefix):
+def get_ngram_file(n, prefix):
     ''' Returns a file object to a ngram file. The ngram file is downloaded
     if needed. '''
     fname = "googlebooks-eng-all-%dgram-20120701-%s" % (n, prefix)
     dstpath = os.path.join(workarea, fname)
     if os.path.exists(dstpath):
-        return dstpath
+        return (dstpath, open(dstpath))
     # Need to get .gz file and gunzip it.
     fname_gz = fname + ".gz"
     srcpath = os.path.join(workarea, fname_gz)
@@ -105,11 +126,19 @@ def get_ngram_file_path(n, prefix):
             "http://storage.googleapis.com/books/ngrams/books/" + fname_gz,
             srcpath)
         print "Downloaded %s" % srcpath
-    subprocess.check_call(['gunzip', srcpath])
-    return dstpath
+    # Pipe the unzipped stream to save disk space
+    subp = subprocess.Popen(['gzip', '-dc', srcpath], stdout=subprocess.PIPE)
+    return (os.path.join(workarea, fname_gz), subp.stdout)
 
-def load_into_db(fpath, gram_n):
-    cols = ','.join(["gram%d" % i for i in range(gram_n)] + ['frequencies'])
+def load_into_db(ngrams, n, prefix):
+    ''' load ngrams into MySQL. '''
+    # Import file name must be the same as database table name. So put it under
+    # a uniquely named tmp directory to avoid conflict.
+    tmpdir = os.path.join(workarea, "%dgram-%s" % (n, prefix))
+    os.mkdir(tmpdir)
+    outfpath = os.path.abspath(os.path.join(tmpdir, "ngram_%d" % n))
+    cleanup.output(ngrams, outfpath)
+    cols = ','.join(["gram%d" % i for i in range(n)] + ['frequencies'])
     cmdargs = ['mysqlimport', '-u', 'root',
                '--local', '--fields-terminated-by="\\t"',
                '--columns=%s' % cols,
@@ -118,26 +147,29 @@ def load_into_db(fpath, gram_n):
     print cmdargs_str
     # For some reason, I have to do one big command string and set shell=True
     # for this to work.
-    subprocess.check_call(cmdargs_str, shell=True)
+    ret = True
+    try:
+        subprocess.check_call(cmdargs_str, shell=True)
+    except subprocess.CalledProcessError as e:
+        print "Failed to import %s (%d gram) to MySQL: %s" % (fpath, gram_n, e)
+        ret = False
+    finally:
+        os.unlink(outfpath)
+        os.rmdir(tmpdir)
+    return ret
 
 def epl(n, prefix):
     ''' Main processing and loading routine. '''
-    fpath = get_ngram_file_path(n, prefix)
-    fin = open(fpath)
+    fpath, fin = get_ngram_file(n, prefix)
     ngrams = cleanup.process_ngram_data(fin)
     fin.close()
     # Delete raw input file to save space now that it is extracted.
     os.unlink(fpath)
-    # Import file name must be the same as database table name. So put it under
-    # a uniquely named tmp directory to avoid conflict.
-    tmpdir = os.path.join(workarea, "%dgram-%s" % (n, prefix))
-    os.mkdir(tmpdir)
-    outfpath = os.path.abspath(os.path.join(tmpdir, "ngram_%d" % n))
-    cleanup.output(ngrams, outfpath)
+    # Write result into results dir as plain text.
+    result_file = os.path.join(resultsarea, "%dgram-%s" % (n, prefix))
+    cleanup.output(ngrams, result_file)
     # load into MySQL
-    load_into_db(outfpath, n)
-    os.unlink(outfpath)
-    os.rmdir(tmpdir)
+    #load_into_db(ngrams, n, prefix)
 
 def test_epl(n, prefix):
     ''' Test EPL. '''
@@ -166,7 +198,14 @@ def clean_exit(signum, frame):
 
 # Install handler for SIGINT
 signal.signal(signal.SIGINT, clean_exit)
-    
+
+# Make sure lock is obtained
+def log_result(n, prefix, success):
+    fname = success_file if success else failure_file
+    fo = open(fname, "a")
+    fo.write("%d-%s\t%s" % (n, prefix, time.asctime()))
+    fo.close()
+
 def process(workfunc):
     ''' Calls 'cleanup()' to create a file. Then load the file into mysql. '''
     lock, unlock, destroylock = mklock()
@@ -178,14 +217,17 @@ def process(workfunc):
             try_fn = lambda: workfunc(n, prefix)
             def giveup_fn():
                 print "Failed to get ngram file %d-%s!" % (n, prefix)
-                fo = open("failed-ngrams.txt", "a")
-                fo.write("%d-%s" % (n, prefix))
-                fo.close()
                 gzfile = "googlebooks-eng-all-%dgram-20120701-%s.gz" % (n, prefix)
-                os.unlink(os.path.join(workarea, gzfile))
-            retry(try_fn, giveup_fn,
-                  (IOError, subprocess.CalledProcessError, OSError),
-                  3, 1)
+                try:
+                    os.unlink(os.path.join(workarea, gzfile))
+                except OSError:
+                    pass
+            result = retry(try_fn, giveup_fn,
+                           (IOError, subprocess.CalledProcessError, OSError),
+                           3, 1)
+            lock()
+            log_result(n, prefix, result)
+            unlock()
         else:
             print "Hooray, All done!!!!!!"
             break
@@ -212,7 +254,7 @@ if __name__ == "__main__":
     cmd = sys.argv[1]
     if cmd == 'init':
         # Doing 1, 2, 3 -grams for now. (4, 5 grams later)
-        init_index([3])
+        init_index([1, 2, 3])
     elif cmd == 'status':
         display_status()
     elif cmd == 'run':

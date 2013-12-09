@@ -139,15 +139,15 @@ def dictionary_words_only(dictionary):
     return dictionary_filter
  
 conf_min_year = 1950
-conf_min_count_per_year = 50
-conf_min_count_total = 2500
+conf_min_count_per_year = 1
+conf_min_count_total = 10
 
 def min_count(gram, year, count):
     ''' Filter based on minimum count per year and minimum year. '''
     if year < conf_min_year or count < conf_min_count_per_year:
         return (gram, year, 0)
     else:
-        return (gram ,year, count)
+        return (gram, year, count)
 
 ##
 # Order matters: For example, the minimus year function is the first because
