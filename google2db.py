@@ -6,6 +6,8 @@ import cleanup # "./cleanup.py"
 import subprocess
 import signal # for clean exit upon Ctrl-C
 import time
+import shutil
+import re
 
 def retry(try_fn, giveup_fn, exception_list, n, wait=0):
     ''' Try function ''try_fn'', catching exceptions in ''exceptions_list'',
@@ -130,19 +132,20 @@ def get_ngram_file(n, prefix):
     subp = subprocess.Popen(['gzip', '-dc', srcpath], stdout=subprocess.PIPE)
     return (os.path.join(workarea, fname_gz), subp.stdout)
 
-def load_into_db(ngrams, n, prefix):
+def load_into_db(ngram_file, n, prefix):
     ''' load ngrams into MySQL. '''
     # Import file name must be the same as database table name. So put it under
     # a uniquely named tmp directory to avoid conflict.
     tmpdir = os.path.join(workarea, "%dgram-%s" % (n, prefix))
     os.mkdir(tmpdir)
     outfpath = os.path.abspath(os.path.join(tmpdir, "ngram_%d" % n))
-    cleanup.output(ngrams, outfpath)
+    shutil.copyfile(ngram_file, outfpath)
     cols = ','.join(["gram%d" % i for i in range(n)] + ['frequencies'])
-    cmdargs = ['mysqlimport', '-u', 'root',
+    cmdargs = ['mysqlimport', '-u', 'www-data',
+               "--password='Generation1234!'",
                '--local', '--fields-terminated-by="\\t"',
                '--columns=%s' % cols,
-               'google_ngram', fpath]
+               'google_ngram', outfpath]
     cmdargs_str =  ' '.join(cmdargs)
     print cmdargs_str
     # For some reason, I have to do one big command string and set shell=True
@@ -151,7 +154,7 @@ def load_into_db(ngrams, n, prefix):
     try:
         subprocess.check_call(cmdargs_str, shell=True)
     except subprocess.CalledProcessError as e:
-        print "Failed to import %s (%d gram) to MySQL: %s" % (fpath, gram_n, e)
+        print "Failed to import %s (%d gram) to MySQL: %s" % (outfpath, n, e)
         ret = False
     finally:
         os.unlink(outfpath)
@@ -169,7 +172,7 @@ def epl(n, prefix):
     result_file = os.path.join(resultsarea, "%dgram-%s" % (n, prefix))
     cleanup.output(ngrams, result_file)
     # load into MySQL
-    #load_into_db(ngrams, n, prefix)
+    #load_into_db(result_file, n, prefix)
 
 def test_epl(n, prefix):
     ''' Test EPL. '''
@@ -203,7 +206,7 @@ signal.signal(signal.SIGINT, clean_exit)
 def log_result(n, prefix, success):
     fname = success_file if success else failure_file
     fo = open(fname, "a")
-    fo.write("%d-%s\t%s" % (n, prefix, time.asctime()))
+    fo.write("%d-%s\t%s\n" % (n, prefix, time.asctime()))
     fo.close()
 
 def process(workfunc):
@@ -236,19 +239,19 @@ def process(workfunc):
     print "Processed %d ngrams files" % cnt
     return
 
-def is_gram_in_db(g):
-    cmdstr_fmt = """mysql -u root -B -e 'select count(*) from ngram_3 where gram0 like "%s%%";' google_ngram"""
-    cmdstr = cmdstr_fmt % g
+def is_gram_in_db(n, g):
+    cmdstr_fmt = """mysql -u www-data --password='Generation1234!' -B -e 'select count(*) from ngram_%d where gram0 like "%s%%";' google_ngram"""
+    cmdstr = cmdstr_fmt % (n, g)
     output = subprocess.check_output(cmdstr, shell=True)
     return (int(output.split('\n')[1]) > 0)
 
-def checkdb():
-    ''' Check for omitted 3grams. '''
-    fname = os.path.join(workarea, "%dgrams.txt" % 3)
+def checkdb(n):
+    ''' Check for omitted ngrams. '''
+    fname = os.path.join(workarea, "%dgrams.txt" % n)
     ngram_file_prefixes = open(fname).read().strip().split(' ')
     for prefix in sorted(ngram_file_prefixes):
-        if not is_gram_in_db(prefix):
-            print prefix
+        if not is_gram_in_db(n, prefix):
+            print "%d %s" % (n, prefix)
 
 if __name__ == "__main__":
     cmd = sys.argv[1]
@@ -260,8 +263,23 @@ if __name__ == "__main__":
     elif cmd == 'run':
         process(epl)
     elif cmd == 'checkdb':
-        checkdb()
+        #checkdb(1)
+        #checkdb(2)
+        checkdb(3)
     elif cmd == 'test':
         process(test_epl)
+    elif cmd == 'load2db':
+        if len(sys.argv) != 3:
+            print "google2db.py load2db results-dir"
+            exit(1)
+        ngrams_results_dir = sys.argv[2]
+        for ngram_file in sorted(os.listdir(ngrams_results_dir)):
+            mobj = re.match(r'(\d+)gram-(\w+)$', ngram_file)
+            if mobj:
+                n, prefix = int(mobj.group(1)), mobj.group(2)
+                print "Importing (%d %s) from %s" % (n, prefix, ngram_file)
+                load_into_db(os.path.join(ngrams_results_dir, ngram_file), n, prefix)
+            else:
+                print "Bad result file name: %s" % (ngram_file)
     else:
-        print "Usage: %s <init|run>" % (sys.argv[0])
+        print "Usage: %s <init|run|status|checkdb|load2db|test>" % (sys.argv[0])
